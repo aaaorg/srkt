@@ -21,24 +21,28 @@ impl Config {
     }
 
     pub fn load(path: &Path) -> Result<Self> {
-        if !path.exists() {
-            return Ok(Self::default());
+        match std::fs::read_to_string(path) {
+            Ok(content) => Ok(toml::from_str(&content)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => Err(e.into()),
         }
-        let content = std::fs::read_to_string(path)?;
-        let config: Config = toml::from_str(&content)?;
-        Ok(config)
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
         }
         let content = toml::to_string_pretty(self)?;
-        std::fs::write(path, content)?;
+        let tmp = path.with_extension("toml.tmp");
+        std::fs::write(&tmp, &content)?;
+        std::fs::rename(&tmp, path)?;
         Ok(())
     }
 
     pub fn add(&mut self, trigger: &str, expansion: &str) -> Result<()> {
+        if trigger.is_empty() {
+            anyhow::bail!("trigger must not be empty");
+        }
         // Overwriting the same trigger is always allowed — skip conflict check for it.
         for existing in self.expansions.keys() {
             if existing == trigger {
@@ -140,5 +144,11 @@ mod tests {
             config.expansions.get("/mail").map(String::as_str),
             Some("new@example.com")
         );
+    }
+
+    #[test]
+    fn test_empty_trigger_rejected() {
+        let mut cfg = Config::default();
+        assert!(cfg.add("", "value").is_err());
     }
 }
