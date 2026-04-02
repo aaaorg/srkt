@@ -85,8 +85,7 @@ fn handle_cmd(cmd: Cmd) -> anyhow::Result<()> {
                 println!("Removed: {}", trigger);
                 let _ = signal_daemon_reload();
             } else {
-                eprintln!("Trigger '{}' not found", trigger);
-                std::process::exit(1);
+                anyhow::bail!("Trigger '{}' not found", trigger);
             }
         }
 
@@ -104,7 +103,7 @@ fn handle_cmd(cmd: Cmd) -> anyhow::Result<()> {
         Cmd::Status => {
             let sock = ipc::socket_path()?;
             if sock.exists() {
-                println!("srkt daemon is running (socket: {:?})", sock);
+                println!("srkt daemon is running (socket: {})", sock.display());
             } else {
                 println!("srkt daemon is NOT running");
                 std::process::exit(1);
@@ -126,6 +125,7 @@ fn signal_daemon_reload() -> anyhow::Result<()> {
     use std::io::Write;
     let mut stream = std::os::unix::net::UnixStream::connect(&sock)?;
     stream.write_all(b"reload\n")?;
+    let _ = stream.shutdown(std::net::Shutdown::Write);
     Ok(())
 }
 
@@ -142,7 +142,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart={}
+ExecStart="{}"
 Restart=on-failure
 RestartSec=2s
 StandardOutput=journal
@@ -156,12 +156,14 @@ WantedBy=graphical-session.target
 
     // Write service file
     let service_dir = {
-        let config_home = std::env::var("XDG_CONFIG_HOME")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| {
-                std::path::PathBuf::from(std::env::var("HOME").expect("HOME not set"))
-                    .join(".config")
-            });
+        let config_home = match std::env::var("XDG_CONFIG_HOME") {
+            Ok(v) => std::path::PathBuf::from(v),
+            Err(_) => {
+                let home = std::env::var("HOME")
+                    .map_err(|_| anyhow::anyhow!("HOME environment variable is not set"))?;
+                std::path::PathBuf::from(home).join(".config")
+            }
+        };
         config_home.join("systemd").join("user")
     };
     std::fs::create_dir_all(&service_dir)?;
