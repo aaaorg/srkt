@@ -303,6 +303,7 @@ fn set_keymap_on_vk(vk: &ZwpVirtualKeyboardV1, keymap_str: &str) -> Result<()> {
     let owned = unsafe { OwnedFd::from_raw_fd(fd) };
     let mut file = std::fs::File::from(owned);
     file.write_all(bytes)?;
+    file.write_all(b"\0")?; // null terminator required by wl_keyboard protocol
     // Virtual keyboard expects the fd; transfer ownership
     let raw: RawFd = file.into_raw_fd();
     let owned = unsafe { OwnedFd::from_raw_fd(raw) };

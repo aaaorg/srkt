@@ -26,6 +26,12 @@ const RESET_KEYS: &[u16] = &[
 ];
 
 pub async fn run(config: Config) -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive("srkt=info".parse()?),
+        )
+        .init();
     tracing::info!("srkt daemon starting");
 
     // Spawn Wayland thread (blocks until keymap received)
