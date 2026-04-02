@@ -17,26 +17,38 @@ pub enum IpcCmd {
 
 pub struct IpcServer {
     listener: UnixListener,
+    path: std::path::PathBuf,
 }
 
 impl IpcServer {
     pub async fn new(path: &Path) -> anyhow::Result<Self> {
-        // Remove stale socket file if it exists.
         let _ = std::fs::remove_file(path);
         let listener = UnixListener::bind(path)?;
-        Ok(Self { listener })
+        Ok(Self { listener, path: path.to_path_buf() })
     }
 
     pub async fn accept(&self) -> anyhow::Result<IpcCmd> {
-        let (stream, _addr) = self.listener.accept().await?;
-        let mut reader = BufReader::new(stream);
-        let mut buf = String::new();
-        reader.read_line(&mut buf).await?;
-        match buf.trim() {
-            "reload" => Ok(IpcCmd::Reload),
-            "status" => Ok(IpcCmd::Status),
-            other => Err(anyhow!("unknown IPC command: {:?}", other)),
+        loop {
+            let (stream, _) = self.listener.accept().await?;
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).await?;
+            match line.trim() {
+                "reload" => return Ok(IpcCmd::Reload),
+                "status" => return Ok(IpcCmd::Status),
+                other => {
+                    // Log and discard — don't let a bad client kill the daemon
+                    tracing::warn!("IPC: ignoring unknown command (len={})", other.len());
+                    continue;
+                }
+            }
         }
+    }
+}
+
+impl Drop for IpcServer {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 
