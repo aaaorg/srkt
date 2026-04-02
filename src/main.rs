@@ -91,8 +91,12 @@ fn handle_cmd(cmd: Cmd) -> anyhow::Result<()> {
         }
 
         Cmd::Reload => {
+            let sock = ipc::socket_path()?;
+            if !sock.exists() {
+                anyhow::bail!("srkt daemon is not running");
+            }
             signal_daemon_reload().map_err(|e| {
-                anyhow::anyhow!("Could not reach daemon (is it running?): {}", e)
+                anyhow::anyhow!("Could not reach daemon: {}", e)
             })?;
             println!("Reloaded");
         }
