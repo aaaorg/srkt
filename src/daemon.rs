@@ -91,20 +91,28 @@ pub async fn run(config: Config) -> Result<()> {
     // Keep watch_tx alive so the channel stays open
     let _watch_tx = watch_tx;
 
+    // Track physical modifier state for XKB-based input character decoding.
+    let mut shift_held = false;
+    let mut altgr_held = false;
+
     tracing::info!("srkt daemon ready");
 
     loop {
         tokio::select! {
             event = kb_stream.next_event() => {
                 match event {
-                    Some(ev) if ev.value == 0 => {
-                        // Key release — ignore
+                    Some(ev) => {
+                        // Update modifier state on both press and release.
+                        match ev.code {
+                            42 | 54 => { shift_held = ev.value == 1; }   // L/R Shift
+                            100 | 108 => { altgr_held = ev.value == 1; } // L/R AltGr
+                            _ if ev.value == 1 => {
+                                // Key press only (not repeat — repeat floods buffer)
+                                handle_key_event(&ev, &mut expander, &injector, shift_held, altgr_held);
+                            }
+                            _ => {}
+                        }
                     }
-                    Some(ev) if ev.value == 1 => {
-                        // Key press only (not repeat — repeat would flood the buffer)
-                        handle_key_event(&ev, &mut expander, &injector);
-                    }
-                    Some(_) => {}
                     None => {
                         tracing::warn!("Keyboard stream ended");
                         break;
@@ -153,6 +161,8 @@ fn handle_key_event(
     ev: &crate::keyboard::KeyEvent,
     expander: &mut Expander,
     injector: &Injector,
+    shift: bool,
+    altgr: bool,
 ) {
     if RESET_KEYS.contains(&ev.code) {
         expander.reset();
@@ -164,11 +174,14 @@ fn handle_key_event(
         return;
     }
 
-    tracing::debug!("evdev code {}", ev.code);
-    if let Some(ch) = evdev_key_to_char(ev.code) {
-        tracing::debug!("key {} -> {:?}", ev.code, ch);
+    // Use the actual XKB keymap to decode the keypress — handles any keyboard layout.
+    if let Some(ch) = injector.keymap().from_evdev(ev.code as u32, shift, altgr) {
+        tracing::debug!("key {} (shift={} altgr={}) -> {:?}", ev.code, shift, altgr, ch);
         if let Some(expansion) = expander.push_char(ch) {
-            tracing::info!("Trigger matched — expanding ({} backspaces + {} chars)", expansion.delete_count, expansion.text.len());
+            tracing::info!(
+                "Trigger matched — expanding ({} backspaces + {} chars)",
+                expansion.delete_count, expansion.text.len()
+            );
             expander.reset();
             injector.backspace(expansion.delete_count);
             injector.type_text(&expansion.text);
@@ -192,23 +205,3 @@ fn reload_config(config: &Arc<Mutex<Config>>, expander: &mut Expander) {
     }
 }
 
-/// Map evdev keycode to ASCII char for trigger buffer.
-/// Only needs to cover characters that appear in trigger strings.
-fn evdev_key_to_char(code: u16) -> Option<char> {
-    match code {
-        16 => Some('q'), 17 => Some('w'), 18 => Some('e'), 19 => Some('r'),
-        20 => Some('t'), 21 => Some('y'), 22 => Some('u'), 23 => Some('i'),
-        24 => Some('o'), 25 => Some('p'), 30 => Some('a'), 31 => Some('s'),
-        32 => Some('d'), 33 => Some('f'), 34 => Some('g'), 35 => Some('h'),
-        36 => Some('j'), 37 => Some('k'), 38 => Some('l'), 44 => Some('z'),
-        45 => Some('x'), 46 => Some('c'), 47 => Some('v'), 48 => Some('b'),
-        49 => Some('n'), 50 => Some('m'),
-        2 => Some('1'), 3 => Some('2'), 4 => Some('3'), 5 => Some('4'),
-        6 => Some('5'), 7 => Some('6'), 8 => Some('7'), 9 => Some('8'),
-        10 => Some('9'), 11 => Some('0'),
-        52 => Some('.'), 53 => Some('/'), 51 => Some(','), 39 => Some(';'),
-        40 => Some('\''), 26 => Some('['), 27 => Some(']'), 43 => Some('\\'),
-        12 => Some('-'), 13 => Some('='), 57 => Some(' '),
-        _ => None,
-    }
-}

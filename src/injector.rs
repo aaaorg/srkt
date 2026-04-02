@@ -25,6 +25,8 @@ pub struct KeyInfo {
 #[derive(Clone)]
 pub struct KeymapLookup {
     table: HashMap<char, KeyInfo>,
+    /// Reverse lookup: (evdev_code, xkb_level) → char, for decoding physical keypresses.
+    input_table: HashMap<(u32, u32), char>,
 }
 
 impl KeymapLookup {
@@ -38,7 +40,7 @@ impl KeymapLookup {
             xkb::KEYMAP_COMPILE_NO_FLAGS,
         ) else {
             tracing::error!("Failed to parse XKB keymap string");
-            return Self { table: HashMap::new() };
+            return Self { table: HashMap::new(), input_table: HashMap::new() };
         };
         Self::build_from_xkb(&keymap)
     }
@@ -54,12 +56,13 @@ impl KeymapLookup {
             Self::build_from_xkb(&keymap)
         } else {
             tracing::error!("Failed to load default system keymap");
-            Self { table: HashMap::new() }
+            Self { table: HashMap::new(), input_table: HashMap::new() }
         }
     }
 
     fn build_from_xkb(keymap: &xkb::Keymap) -> Self {
         let mut table: HashMap<char, KeyInfo> = HashMap::new();
+        let mut input_table: HashMap<(u32, u32), char> = HashMap::new();
         keymap.key_for_each(|km, kc| {
             let xkb_code = kc.raw();
             if xkb_code < 8 {
@@ -76,16 +79,30 @@ impl KeymapLookup {
                                 evdev_code,
                                 mods_depressed: if level == 1 { 1 } else { 0 },
                             });
+                            // Also record (evdev_code, level) → char for input decoding.
+                            input_table.entry((evdev_code, level as u32)).or_insert(ch);
                         }
                     }
                 }
             }
         });
-        Self { table }
+        Self { table, input_table }
     }
 
     pub fn lookup(&self, ch: char) -> Option<&KeyInfo> {
         self.table.get(&ch)
+    }
+
+    /// Decode a physical keypress to a char using the actual XKB keymap.
+    /// `shift` = left/right Shift held; `altgr` = AltGr (right Alt) held.
+    pub fn from_evdev(&self, evdev_code: u32, shift: bool, altgr: bool) -> Option<char> {
+        let level: u32 = match (shift, altgr) {
+            (false, false) => 0,
+            (true, false) => 1,
+            (false, true) => 2,
+            (true, true) => 3,
+        };
+        self.input_table.get(&(evdev_code, level)).copied()
     }
 }
 
@@ -156,6 +173,10 @@ impl Injector {
         Ok(Self { tx: cmd_tx, keymap })
     }
 
+    pub fn keymap(&self) -> &KeymapLookup {
+        &self.keymap
+    }
+
     pub fn backspace(&self, count: usize) {
         for _ in 0..count {
             let _ = self.tx.send(InjectionCmd::Key { code: 14, value: 1 }); // press
@@ -224,6 +245,17 @@ fn uinput_thread(cmd_rx: mpsc::Receiver<InjectionCmd>) -> Result<()> {
                 if let Err(e) = device.emit(&events) {
                     tracing::error!("uinput emit error: {}", e);
                 }
+                // Delay so the compositor has time to process modifier state changes
+                // before the next event arrives.  Without this, rapid injection
+                // causes scrambled output (modifier bleeds into adjacent keys).
+                // Modifier-key releases need extra time to "settle" in the compositor.
+                let delay_ms: u64 = match (value, code) {
+                    (1, _) => 5,                              // after any press
+                    (0, 42) | (0, 54) | (0, 100) | (0, 108) => 20, // Shift/AltGr release
+                    (0, _) => 12,                             // after regular release
+                    _ => 5,
+                };
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
             }
             Err(_) => break, // channel closed — daemon shutting down
         }
