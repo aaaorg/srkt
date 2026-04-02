@@ -58,7 +58,9 @@ pub async fn run(config: Config) -> Result<()> {
     let (watch_tx, mut watch_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
     let config_path = Config::path();
     let watch_tx2 = watch_tx.clone();
-    tokio::task::spawn_blocking(move || {
+    // Use std::thread::spawn (not spawn_blocking) so the tokio runtime doesn't
+    // wait for this thread on shutdown, enabling fast SIGTERM handling.
+    std::thread::spawn(move || {
         use notify::{Config as NConfig, RecommendedWatcher, RecursiveMode, Watcher};
         use std::sync::mpsc;
         let (tx, rx) = mpsc::channel();
@@ -162,9 +164,11 @@ fn handle_key_event(
         return;
     }
 
+    tracing::debug!("evdev code {}", ev.code);
     if let Some(ch) = evdev_key_to_char(ev.code) {
+        tracing::debug!("key {} -> {:?}", ev.code, ch);
         if let Some(expansion) = expander.push_char(ch) {
-            tracing::debug!("Expanding trigger ({} chars)", expansion.delete_count);
+            tracing::info!("Trigger matched — expanding ({} backspaces + {} chars)", expansion.delete_count, expansion.text.len());
             expander.reset();
             injector.backspace(expansion.delete_count);
             injector.type_text(&expansion.text);

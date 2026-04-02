@@ -33,6 +33,7 @@ impl KeyboardStream {
         let keyboards = discover_keyboards().unwrap_or_default();
         tracing::info!("Found {} keyboard device(s)", keyboards.len());
         for (path, device) in keyboards {
+            tracing::info!("Reading keyboard: {:?} ({})", path, device.name().unwrap_or("unknown"));
             let tx2 = tx.clone();
             let done_tx2 = done_tx.clone();
             tokio::spawn(run_device_reader(device, path, tx2, done_tx2));
