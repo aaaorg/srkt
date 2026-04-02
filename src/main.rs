@@ -142,11 +142,12 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart="{}"
+ExecStart={}
 Restart=on-failure
 RestartSec=2s
 StandardOutput=journal
 StandardError=journal
+ImportEnvironment=WAYLAND_DISPLAY XDG_RUNTIME_DIR
 
 [Install]
 WantedBy=graphical-session.target

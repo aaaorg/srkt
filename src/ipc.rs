@@ -52,6 +52,7 @@ impl Drop for IpcServer {
     }
 }
 
+#[allow(dead_code)]
 pub async fn send_cmd(path: &Path, cmd: &str) -> anyhow::Result<String> {
     let mut stream = UnixStream::connect(path).await?;
     stream.write_all(format!("{}\n", cmd).as_bytes()).await?;
