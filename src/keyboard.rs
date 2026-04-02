@@ -2,9 +2,6 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use evdev::{Device, EventType, Key};
-use notify::{EventKind, RecursiveMode, Watcher};
-use tokio::sync::mpsc;
-use tracing::{info, warn};
 
 /// A single key event forwarded from the kernel via evdev.
 #[derive(Debug, Clone)]
@@ -15,92 +12,31 @@ pub struct KeyEvent {
 
 /// Merges key events from all physical keyboards into a single async stream.
 pub struct KeyboardStream {
-    rx: mpsc::UnboundedReceiver<KeyEvent>,
+    rx: tokio::sync::mpsc::UnboundedReceiver<KeyEvent>,
 }
 
 impl KeyboardStream {
     /// Discover keyboards, start per-device reader tasks, and start the hotplug watcher.
     pub async fn new() -> anyhow::Result<Self> {
-        let (tx, rx) = mpsc::unbounded_channel::<KeyEvent>();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<KeyEvent>();
+        let (done_tx, done_rx) = tokio::sync::mpsc::unbounded_channel::<PathBuf>();
 
-        // Track which paths we have already opened so the hotplug watcher doesn't
-        // re-open them.
-        let mut known: HashSet<PathBuf> = HashSet::new();
+        // Start hotplug actor (registers watch BEFORE we scan, closing the race window)
+        let tx_clone = tx.clone();
+        let done_tx_clone = done_tx.clone();
+        tokio::spawn(hotplug_actor(tx_clone, done_rx, done_tx_clone));
 
-        for path in discover_keyboards() {
-            known.insert(path.clone());
+        // Small yield to let the actor register its watch before we scan
+        tokio::task::yield_now().await;
+
+        // Now scan for existing keyboards
+        let keyboards = discover_keyboards().unwrap_or_default();
+        tracing::info!("Found {} keyboard device(s)", keyboards.len());
+        for (path, device) in keyboards {
             let tx2 = tx.clone();
-            tokio::spawn(async move {
-                if let Err(e) = run_device_reader(path.clone(), tx2).await {
-                    warn!("device reader for {:?} exited: {}", path, e);
-                }
-            });
+            let done_tx2 = done_tx.clone();
+            tokio::spawn(run_device_reader(device, path, tx2, done_tx2));
         }
-
-        // Hotplug: watch /dev/input/ for new event files.
-        // notify callbacks must be Send + 'static, so we bridge through a std channel.
-        let (notify_tx, notify_rx) = std::sync::mpsc::channel::<PathBuf>();
-
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            match res {
-                Ok(event) => {
-                    if matches!(event.kind, EventKind::Create(_)) {
-                        for path in event.paths {
-                            let _ = notify_tx.send(path);
-                        }
-                    }
-                }
-                Err(e) => warn!("inotify error: {}", e),
-            }
-        })?;
-
-        watcher.watch(std::path::Path::new("/dev/input"), RecursiveMode::NonRecursive)?;
-
-        // Bridge the blocking std::sync::mpsc into an async tokio channel so that
-        // the watcher future can drive new-device spawns.
-        let (hotplug_tx, mut hotplug_rx) = mpsc::unbounded_channel::<PathBuf>();
-        let hotplug_tx2 = hotplug_tx.clone();
-
-        // Keep watcher alive by moving it into the blocking thread.
-        tokio::task::spawn_blocking(move || {
-            // The watcher must stay alive for the duration of this thread.
-            let _watcher = watcher;
-            loop {
-                match notify_rx.recv() {
-                    Ok(path) => {
-                        if hotplug_tx2.send(path).is_err() {
-                            break; // async side dropped — time to stop
-                        }
-                    }
-                    Err(_) => break, // sender (watcher) dropped
-                }
-            }
-        });
-
-        // Async task that handles new paths arriving from the hotplug channel.
-        tokio::spawn(async move {
-            while let Some(path) = hotplug_rx.recv().await {
-                if !is_event_device(&path) || known.contains(&path) {
-                    continue;
-                }
-                match Device::open(&path) {
-                    Ok(dev) => {
-                        if !is_keyboard(&dev) || is_virtual(&dev) {
-                            continue;
-                        }
-                        info!("hotplug: opened keyboard {:?}", path);
-                        known.insert(path.clone());
-                        let tx3 = tx.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = run_device_reader(path.clone(), tx3).await {
-                                warn!("hotplug device reader for {:?} exited: {}", path, e);
-                            }
-                        });
-                    }
-                    Err(e) => warn!("hotplug: could not open {:?}: {}", path, e),
-                }
-            }
-        });
 
         Ok(Self { rx })
     }
@@ -115,40 +51,24 @@ impl KeyboardStream {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Scan `/dev/input/event*` and return paths of confirmed keyboard devices.
-fn discover_keyboards() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    let read_dir = match std::fs::read_dir("/dev/input") {
-        Ok(rd) => rd,
-        Err(e) => {
-            warn!("cannot read /dev/input: {}", e);
-            return paths;
-        }
-    };
-    for entry in read_dir.flatten() {
+/// Scan `/dev/input/event*` and return paths + already-opened devices for confirmed keyboards.
+fn discover_keyboards() -> anyhow::Result<Vec<(PathBuf, evdev::Device)>> {
+    let mut keyboards = Vec::new();
+    let dir = std::fs::read_dir("/dev/input")?;
+    for entry in dir.flatten() {
         let path = entry.path();
-        if !is_event_device(&path) {
-            continue;
-        }
-        match Device::open(&path) {
-            Ok(dev) => {
-                if is_keyboard(&dev) && !is_virtual(&dev) {
-                    info!("found keyboard: {:?} (name={:?})", path, dev.name());
-                    paths.push(path);
+        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        if !name.starts_with("event") { continue; }
+        match evdev::Device::open(&path) {
+            Ok(device) => {
+                if is_keyboard(&device) && !is_virtual(&device) {
+                    keyboards.push((path, device));
                 }
             }
-            Err(e) => warn!("cannot open {:?}: {}", path, e),
+            Err(_) => {}
         }
     }
-    paths
-}
-
-/// Returns `true` if `path` looks like `/dev/input/event<N>`.
-fn is_event_device(path: &std::path::Path) -> bool {
-    path.file_name()
-        .and_then(|n| n.to_str())
-        .map(|n| n.starts_with("event"))
-        .unwrap_or(false)
+    Ok(keyboards)
 }
 
 /// Returns `true` if `device` supports EV_KEY and has KEY_A, KEY_Z, and KEY_SPACE.
@@ -172,26 +92,104 @@ fn is_virtual(device: &Device) -> bool {
 
 /// Runs the event loop for a single keyboard device.
 ///
-/// Opens an async `EventStream`, reads key events, and forwards them to `tx`.
-/// Returns when the device is removed or `tx` is closed.
+/// Accepts an already-opened device to avoid double-open.
+/// Forwards key events to `tx`, and signals `done_tx` when it exits.
 async fn run_device_reader(
+    device: evdev::Device,
     path: PathBuf,
-    tx: mpsc::UnboundedSender<KeyEvent>,
+    tx: tokio::sync::mpsc::UnboundedSender<KeyEvent>,
+    done_tx: tokio::sync::mpsc::UnboundedSender<PathBuf>,
+) {
+    let result = read_device_loop(device, &tx).await;
+    if let Err(e) = result {
+        tracing::warn!("Device reader exited for {:?}: {}", path, e);
+    }
+    // Notify hotplug actor that this device is no longer active
+    let _ = done_tx.send(path);
+}
+
+async fn read_device_loop(
+    device: evdev::Device,
+    tx: &tokio::sync::mpsc::UnboundedSender<KeyEvent>,
 ) -> anyhow::Result<()> {
-    let device = Device::open(&path)?;
-    info!("reading events from {:?} (name={:?})", path, device.name());
     let mut stream = device.into_event_stream()?;
     loop {
-        let ev = stream.next_event().await?;
-        if ev.event_type() == EventType::KEY {
-            let key_event = KeyEvent {
-                code: ev.code(),
-                value: ev.value(),
-            };
-            if tx.send(key_event).is_err() {
-                break; // receiver dropped — shutdown
+        let event = stream.next_event().await?;
+        if event.event_type() == evdev::EventType::KEY {
+            if tx.send(KeyEvent { code: event.code(), value: event.value() }).is_err() {
+                break; // receiver dropped
             }
         }
     }
     Ok(())
+}
+
+/// Watches `/dev/input` for new keyboard devices and spawns readers for them.
+/// Also tracks active devices via `done_rx` so replug works correctly.
+async fn hotplug_actor(
+    tx: tokio::sync::mpsc::UnboundedSender<KeyEvent>,
+    mut done_rx: tokio::sync::mpsc::UnboundedReceiver<PathBuf>,
+    done_tx: tokio::sync::mpsc::UnboundedSender<PathBuf>,
+) {
+    use notify::{Config as NConfig, RecommendedWatcher, RecursiveMode, Watcher, EventKind};
+
+    let (ntx, nrx) = std::sync::mpsc::channel();
+    let mut watcher = match RecommendedWatcher::new(ntx, NConfig::default()) {
+        Ok(w) => w,
+        Err(e) => { tracing::error!("Failed to create notify watcher: {}", e); return; }
+    };
+    if let Err(e) = watcher.watch(std::path::Path::new("/dev/input"), RecursiveMode::NonRecursive) {
+        tracing::error!("Failed to watch /dev/input: {}", e); return;
+    }
+
+    let (new_device_tx, mut new_device_rx) = tokio::sync::mpsc::unbounded_channel::<std::path::PathBuf>();
+
+    // Bridge blocking notify channel → async
+    std::thread::spawn(move || {
+        // Keep watcher alive for the duration of this thread.
+        let _watcher = watcher;
+        while let Ok(event) = nrx.recv() {
+            if let Ok(ev) = event {
+                if matches!(ev.kind, EventKind::Create(_)) {
+                    for path in ev.paths {
+                        let _ = new_device_tx.send(path);
+                    }
+                }
+            }
+        }
+    });
+
+    let mut active: HashSet<std::path::PathBuf> = HashSet::new();
+
+    loop {
+        tokio::select! {
+            path = done_rx.recv() => {
+                match path {
+                    Some(p) => { active.remove(&p); tracing::info!("Device removed from active set: {:?}", p); }
+                    None => break,
+                }
+            }
+            path = new_device_rx.recv() => {
+                match path {
+                    Some(p) => {
+                        let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        if !name.starts_with("event") { continue; }
+                        if active.contains(&p) { continue; }
+                        // Try to open and check if it's a keyboard
+                        match evdev::Device::open(&p) {
+                            Ok(device) if is_keyboard(&device) && !is_virtual(&device) => {
+                                tracing::info!("New keyboard detected: {:?}", p);
+                                active.insert(p.clone());
+                                let tx2 = tx.clone();
+                                let done_tx2 = done_tx.clone();
+                                tokio::spawn(run_device_reader(device, p, tx2, done_tx2));
+                            }
+                            _ => {}
+                        }
+                    }
+                    None => break,
+                }
+            }
+        }
+    }
 }
