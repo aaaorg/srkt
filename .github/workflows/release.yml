@@ -5,6 +5,9 @@ on:
     tags:
       - 'v[0-9]*'
 
+permissions:
+  contents: read
+
 jobs:
   build-x86_64:
     name: Build (x86_64-linux)
@@ -122,7 +125,7 @@ jobs:
 
   publish-crates:
     name: Publish to crates.io
-    needs: [build-x86_64, build-aarch64]
+    needs: [github-release]
     runs-on: ubuntu-24.04
 
     steps:
@@ -130,6 +133,17 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
 
       - name: Install system dependencies
         run: |
