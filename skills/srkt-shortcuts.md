@@ -7,6 +7,7 @@ version: 1.0.0
 # srkt shortcuts
 
 Use when the user asks to:
+
 - add a shortcut / expansion to srkt
 - remove a shortcut from srkt
 - list or show current srkt shortcuts
@@ -33,12 +34,14 @@ Use when the user asks to:
 ## Workflow
 
 ### List expansions
+
 ```bash
 srkt list
 srkt status
 ```
 
 ### Add or overwrite an expansion
+
 ```bash
 srkt add '/trigger' 'expansion text'
 srkt reload
@@ -46,6 +49,7 @@ srkt list
 ```
 
 ### Multiline expansion
+
 ```bash
 srkt add '/sig' 'Line 1\nLine 2'
 srkt reload
@@ -53,6 +57,7 @@ srkt list
 ```
 
 ### Remove an expansion
+
 ```bash
 srkt remove '/trigger'
 srkt reload
@@ -62,6 +67,7 @@ srkt list
 ## What to report to the user
 
 Keep it brief:
+
 - what changed (trigger + resulting value)
 - that `srkt reload` ran
 - the error message verbatim if the operation failed (prefix conflict, trigger not found, etc.)
@@ -78,15 +84,11 @@ Keep it brief:
 
 ## Installation
 
-### Claude Code / oh-my-claudecode
+### Claude Code
 
 Copy this file to your Claude Code skills directory:
 
 ```bash
-# oh-my-claudecode (default location)
-cp skills/srkt-shortcuts.md ~/.claude/skills/srkt-shortcuts.md
-
-# Plain Claude Code
 cp skills/srkt-shortcuts.md ~/.claude/skills/srkt-shortcuts.md
 ```
 
