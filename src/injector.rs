@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use evdev::{uinput::VirtualDeviceBuilder, AttributeSet, EventType, InputEvent, Key};
 use std::collections::HashMap;
 use std::io::Read;
 use std::os::fd::IntoRawFd;
@@ -10,7 +11,6 @@ use wayland_client::{
     Connection, Dispatch, QueueHandle,
 };
 use xkbcommon::xkb;
-use evdev::{uinput::VirtualDeviceBuilder, AttributeSet, EventType, InputEvent, Key};
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -41,7 +41,10 @@ impl KeymapLookup {
             xkb::KEYMAP_COMPILE_NO_FLAGS,
         ) else {
             tracing::error!("Failed to parse XKB keymap string");
-            return Self { table: HashMap::new(), input_table: HashMap::new() };
+            return Self {
+                table: HashMap::new(),
+                input_table: HashMap::new(),
+            };
         };
         Self::build_from_xkb(&keymap)
     }
@@ -49,15 +52,17 @@ impl KeymapLookup {
     /// Fallback: load the system default keymap via xkbcommon (no Wayland needed).
     pub fn build_default() -> Self {
         let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-        if let Some(keymap) = xkb::Keymap::new_from_names(
-            &ctx, "", "", "", "", None,
-            xkb::KEYMAP_COMPILE_NO_FLAGS,
-        ) {
+        if let Some(keymap) =
+            xkb::Keymap::new_from_names(&ctx, "", "", "", "", None, xkb::KEYMAP_COMPILE_NO_FLAGS)
+        {
             tracing::info!("Loaded system default XKB keymap");
             Self::build_from_xkb(&keymap)
         } else {
             tracing::error!("Failed to load default system keymap");
-            Self { table: HashMap::new(), input_table: HashMap::new() }
+            Self {
+                table: HashMap::new(),
+                input_table: HashMap::new(),
+            }
         }
     }
 
@@ -144,16 +149,14 @@ impl Injector {
         // Falls back to system default keymap if Wayland is unavailable.
         thread::Builder::new()
             .name("srkt-keymap".into())
-            .spawn(move || {
-                match wayland_keymap_thread(keymap_tx.clone()) {
-                    Ok(()) => {}
-                    Err(e) => {
-                        tracing::warn!(
-                            "Wayland keymap unavailable ({}), falling back to system default",
-                            e
-                        );
-                        let _ = keymap_tx.send(KeymapLookup::build_default());
-                    }
+            .spawn(move || match wayland_keymap_thread(keymap_tx.clone()) {
+                Ok(()) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        "Wayland keymap unavailable ({}), falling back to system default",
+                        e
+                    );
+                    let _ = keymap_tx.send(KeymapLookup::build_default());
                 }
             })
             .context("Failed to spawn keymap thread")?;
@@ -172,7 +175,10 @@ impl Injector {
             .recv_timeout(std::time::Duration::from_secs(5))
             .context("Timed out waiting for keymap")?;
 
-        tracing::info!("Keymap loaded, {} chars in lookup table", keymap.table.len());
+        tracing::info!(
+            "Keymap loaded, {} chars in lookup table",
+            keymap.table.len()
+        );
         Ok(Self { tx: cmd_tx, keymap })
     }
 
@@ -200,12 +206,26 @@ impl Injector {
                     // KEY_LEFTSHIFT=42, KEY_RIGHTALT=100 (AltGr)
                     let need_shift = ki.level == 1 || ki.level == 3;
                     let need_altgr = ki.level == 2 || ki.level == 3;
-                    if need_altgr { let _ = self.tx.send(InjectionCmd::Key { code: 100, value: 1 }); }
-                    if need_shift { let _ = self.tx.send(InjectionCmd::Key { code: 42, value: 1 }); }
+                    if need_altgr {
+                        let _ = self.tx.send(InjectionCmd::Key {
+                            code: 100,
+                            value: 1,
+                        });
+                    }
+                    if need_shift {
+                        let _ = self.tx.send(InjectionCmd::Key { code: 42, value: 1 });
+                    }
                     let _ = self.tx.send(InjectionCmd::Key { code, value: 1 });
                     let _ = self.tx.send(InjectionCmd::Key { code, value: 0 });
-                    if need_shift { let _ = self.tx.send(InjectionCmd::Key { code: 42, value: 0 }); }
-                    if need_altgr { let _ = self.tx.send(InjectionCmd::Key { code: 100, value: 0 }); }
+                    if need_shift {
+                        let _ = self.tx.send(InjectionCmd::Key { code: 42, value: 0 });
+                    }
+                    if need_altgr {
+                        let _ = self.tx.send(InjectionCmd::Key {
+                            code: 100,
+                            value: 0,
+                        });
+                    }
                 }
                 None => tracing::warn!("No keycode for char {:?}, skipping", ch),
             }
@@ -253,9 +273,9 @@ fn uinput_thread(cmd_rx: mpsc::Receiver<InjectionCmd>) -> Result<()> {
                 // causes scrambled output (modifier bleeds into adjacent keys).
                 // Modifier-key releases need extra time to "settle" in the compositor.
                 let delay_ms: u64 = match (value, code) {
-                    (1, _) => 5,                              // after any press
+                    (1, _) => 5,                                   // after any press
                     (0, 42) | (0, 54) | (0, 100) | (0, 108) => 20, // Shift/AltGr release
-                    (0, _) => 12,                             // after regular release
+                    (0, _) => 12,                                  // after regular release
                     _ => 5,
                 };
                 std::thread::sleep(std::time::Duration::from_millis(delay_ms));
@@ -316,7 +336,14 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WaylandKeymapState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let wl_registry::Event::Global { name, interface, version: _ } = event else { return };
+        let wl_registry::Event::Global {
+            name,
+            interface,
+            version: _,
+        } = event
+        else {
+            return;
+        };
         if interface == "wl_seat" {
             let seat: wl_seat::WlSeat = registry.bind(name, 1, qh, ());
             state.seat = Some(seat);
@@ -326,9 +353,14 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WaylandKeymapState {
 
 impl Dispatch<wl_seat::WlSeat, ()> for WaylandKeymapState {
     fn event(
-        _: &mut Self, _: &wl_seat::WlSeat, _: wl_seat::Event,
-        _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {}
+        _: &mut Self,
+        _: &wl_seat::WlSeat,
+        _: wl_seat::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandKeymapState {
@@ -340,7 +372,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandKeymapState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let wl_keyboard::Event::Keymap { format: _, fd, size } = event {
+        if let wl_keyboard::Event::Keymap {
+            format: _,
+            fd,
+            size,
+        } = event
+        {
             if state.keymap_sent {
                 return;
             }

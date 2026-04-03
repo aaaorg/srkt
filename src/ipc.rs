@@ -5,8 +5,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
 pub fn socket_path() -> anyhow::Result<PathBuf> {
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-        .map_err(|_| anyhow!("XDG_RUNTIME_DIR not set"))?;
+    let runtime_dir =
+        std::env::var("XDG_RUNTIME_DIR").map_err(|_| anyhow!("XDG_RUNTIME_DIR not set"))?;
     Ok(PathBuf::from(runtime_dir).join("srkt.sock"))
 }
 
@@ -24,7 +24,10 @@ impl IpcServer {
     pub async fn new(path: &Path) -> anyhow::Result<Self> {
         let _ = std::fs::remove_file(path);
         let listener = UnixListener::bind(path)?;
-        Ok(Self { listener, path: path.to_path_buf() })
+        Ok(Self {
+            listener,
+            path: path.to_path_buf(),
+        })
     }
 
     pub async fn accept(&self) -> anyhow::Result<IpcCmd> {

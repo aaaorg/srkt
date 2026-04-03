@@ -57,7 +57,8 @@ impl Config {
                 );
             }
         }
-        self.expansions.insert(trigger.to_string(), expansion.to_string());
+        self.expansions
+            .insert(trigger.to_string(), expansion.to_string());
         Ok(())
     }
 
@@ -93,7 +94,10 @@ mod tests {
         config.save(&path).unwrap();
 
         let loaded = Config::load(&path).unwrap();
-        assert_eq!(loaded.expansions.get("/mail").map(String::as_str), Some("user@example.com"));
+        assert_eq!(
+            loaded.expansions.get("/mail").map(String::as_str),
+            Some("user@example.com")
+        );
     }
 
     #[test]
@@ -107,7 +111,10 @@ mod tests {
         config.save(&path).unwrap();
 
         let loaded = Config::load(&path).unwrap();
-        assert_eq!(loaded.expansions.get("/sig").map(String::as_str), Some(multiline));
+        assert_eq!(
+            loaded.expansions.get("/sig").map(String::as_str),
+            Some(multiline)
+        );
     }
 
     #[test]

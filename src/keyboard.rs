@@ -6,8 +6,8 @@ use evdev::{Device, EventType, Key};
 /// A single key event forwarded from the kernel via evdev.
 #[derive(Debug, Clone)]
 pub struct KeyEvent {
-    pub code: u16,   // Linux evdev keycode
-    pub value: i32,  // 0=release, 1=press, 2=repeat
+    pub code: u16,  // Linux evdev keycode
+    pub value: i32, // 0=release, 1=press, 2=repeat
 }
 
 /// Merges key events from all physical keyboards into a single async stream.
@@ -33,7 +33,11 @@ impl KeyboardStream {
         let keyboards = discover_keyboards().unwrap_or_default();
         tracing::info!("Found {} keyboard device(s)", keyboards.len());
         for (path, device) in keyboards {
-            tracing::info!("Reading keyboard: {:?} ({})", path, device.name().unwrap_or("unknown"));
+            tracing::info!(
+                "Reading keyboard: {:?} ({})",
+                path,
+                device.name().unwrap_or("unknown")
+            );
             let tx2 = tx.clone();
             let done_tx2 = done_tx.clone();
             tokio::spawn(run_device_reader(device, path, tx2, done_tx2));
@@ -58,8 +62,14 @@ fn discover_keyboards() -> anyhow::Result<Vec<(PathBuf, evdev::Device)>> {
     let dir = std::fs::read_dir("/dev/input")?;
     for entry in dir.flatten() {
         let path = entry.path();
-        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-        if !name.starts_with("event") { continue; }
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        if !name.starts_with("event") {
+            continue;
+        }
         match evdev::Device::open(&path) {
             Ok(device) => {
                 if is_keyboard(&device) && !is_virtual(&device) {
@@ -117,7 +127,13 @@ async fn read_device_loop(
     loop {
         let event = stream.next_event().await?;
         if event.event_type() == evdev::EventType::KEY {
-            if tx.send(KeyEvent { code: event.code(), value: event.value() }).is_err() {
+            if tx
+                .send(KeyEvent {
+                    code: event.code(),
+                    value: event.value(),
+                })
+                .is_err()
+            {
                 break; // receiver dropped
             }
         }
@@ -132,18 +148,26 @@ async fn hotplug_actor(
     mut done_rx: tokio::sync::mpsc::UnboundedReceiver<PathBuf>,
     done_tx: tokio::sync::mpsc::UnboundedSender<PathBuf>,
 ) {
-    use notify::{Config as NConfig, RecommendedWatcher, RecursiveMode, Watcher, EventKind};
+    use notify::{Config as NConfig, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
     let (ntx, nrx) = std::sync::mpsc::channel();
     let mut watcher = match RecommendedWatcher::new(ntx, NConfig::default()) {
         Ok(w) => w,
-        Err(e) => { tracing::error!("Failed to create notify watcher: {}", e); return; }
+        Err(e) => {
+            tracing::error!("Failed to create notify watcher: {}", e);
+            return;
+        }
     };
-    if let Err(e) = watcher.watch(std::path::Path::new("/dev/input"), RecursiveMode::NonRecursive) {
-        tracing::error!("Failed to watch /dev/input: {}", e); return;
+    if let Err(e) = watcher.watch(
+        std::path::Path::new("/dev/input"),
+        RecursiveMode::NonRecursive,
+    ) {
+        tracing::error!("Failed to watch /dev/input: {}", e);
+        return;
     }
 
-    let (new_device_tx, mut new_device_rx) = tokio::sync::mpsc::unbounded_channel::<std::path::PathBuf>();
+    let (new_device_tx, mut new_device_rx) =
+        tokio::sync::mpsc::unbounded_channel::<std::path::PathBuf>();
 
     // Bridge blocking notify channel → async
     std::thread::spawn(move || {
