@@ -84,12 +84,9 @@ impl KeymapLookup {
             for level in 0..num_levels {
                 for sym in km.key_get_syms_by_level(kc, layout, level) {
                     if let Some(ch) = keysym_to_char(*sym) {
-                        table.entry(ch).or_insert(KeyInfo {
-                            evdev_code,
-                            level: level as u32,
-                        });
+                        table.entry(ch).or_insert(KeyInfo { evdev_code, level });
                         // Also record (evdev_code, level) → char for input decoding.
-                        input_table.entry((evdev_code, level as u32)).or_insert(ch);
+                        input_table.entry((evdev_code, level)).or_insert(ch);
                     }
                 }
             }
@@ -103,7 +100,7 @@ impl KeymapLookup {
 
     /// Decode a physical keypress to a char using the actual XKB keymap.
     /// `shift` = left/right Shift held; `altgr` = AltGr (right Alt) held.
-    pub fn from_evdev(&self, evdev_code: u32, shift: bool, altgr: bool) -> Option<char> {
+    pub fn decode(&self, evdev_code: u32, shift: bool, altgr: bool) -> Option<char> {
         let level: u32 = match (shift, altgr) {
             (false, false) => 0,
             (true, false) => 1,
@@ -258,30 +255,25 @@ fn uinput_thread(cmd_rx: mpsc::Receiver<InjectionCmd>) -> Result<()> {
     // before we start injecting (prevents self-triggering).
     std::thread::sleep(std::time::Duration::from_millis(200));
 
-    loop {
-        match cmd_rx.recv() {
-            Ok(InjectionCmd::Key { code, value }) => {
-                let events = [
-                    InputEvent::new(EventType::KEY, code, value),
-                    InputEvent::new(EventType::SYNCHRONIZATION, 0, 0),
-                ];
-                if let Err(e) = device.emit(&events) {
-                    tracing::error!("uinput emit error: {}", e);
-                }
-                // Delay so the compositor has time to process modifier state changes
-                // before the next event arrives.  Without this, rapid injection
-                // causes scrambled output (modifier bleeds into adjacent keys).
-                // Modifier-key releases need extra time to "settle" in the compositor.
-                let delay_ms: u64 = match (value, code) {
-                    (1, _) => 5,                                   // after any press
-                    (0, 42) | (0, 54) | (0, 100) | (0, 108) => 20, // Shift/AltGr release
-                    (0, _) => 12,                                  // after regular release
-                    _ => 5,
-                };
-                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-            }
-            Err(_) => break, // channel closed — daemon shutting down
+    while let Ok(InjectionCmd::Key { code, value }) = cmd_rx.recv() {
+        let events = [
+            InputEvent::new(EventType::KEY, code, value),
+            InputEvent::new(EventType::SYNCHRONIZATION, 0, 0),
+        ];
+        if let Err(e) = device.emit(&events) {
+            tracing::error!("uinput emit error: {}", e);
         }
+        // Delay so the compositor has time to process modifier state changes
+        // before the next event arrives.  Without this, rapid injection
+        // causes scrambled output (modifier bleeds into adjacent keys).
+        // Modifier-key releases need extra time to "settle" in the compositor.
+        let delay_ms: u64 = match (value, code) {
+            (1, _) => 5,                                   // after any press
+            (0, 42) | (0, 54) | (0, 100) | (0, 108) => 20, // Shift/AltGr release
+            (0, _) => 12,                                  // after regular release
+            _ => 5,
+        };
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
     }
     Ok(())
 }

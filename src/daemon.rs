@@ -79,13 +79,8 @@ pub async fn run(config: Config) -> Result<()> {
             tracing::error!("Failed to watch config file: {}", e);
             return;
         }
-        loop {
-            match rx.recv() {
-                Ok(_) => {
-                    let _ = watch_tx2.send(());
-                }
-                Err(_) => break, // channel closed, exit loop cleanly
-            }
+        while rx.recv().is_ok() {
+            let _ = watch_tx2.send(());
         }
     });
 
@@ -181,7 +176,7 @@ fn handle_key_event(
     }
 
     // Use the actual XKB keymap to decode the keypress — handles any keyboard layout.
-    if let Some(ch) = injector.keymap().from_evdev(ev.code as u32, shift, altgr) {
+    if let Some(ch) = injector.keymap().decode(ev.code as u32, shift, altgr) {
         tracing::debug!(
             "key {} (shift={} altgr={}) -> {:?}",
             ev.code,

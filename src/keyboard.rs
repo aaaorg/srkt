@@ -70,13 +70,10 @@ fn discover_keyboards() -> anyhow::Result<Vec<(PathBuf, evdev::Device)>> {
         if !name.starts_with("event") {
             continue;
         }
-        match evdev::Device::open(&path) {
-            Ok(device) => {
-                if is_keyboard(&device) && !is_virtual(&device) {
-                    keyboards.push((path, device));
-                }
+        if let Ok(device) = evdev::Device::open(&path) {
+            if is_keyboard(&device) && !is_virtual(&device) {
+                keyboards.push((path, device));
             }
-            Err(_) => {}
         }
     }
     Ok(keyboards)
@@ -126,16 +123,15 @@ async fn read_device_loop(
     let mut stream = device.into_event_stream()?;
     loop {
         let event = stream.next_event().await?;
-        if event.event_type() == evdev::EventType::KEY {
-            if tx
+        if event.event_type() == evdev::EventType::KEY
+            && tx
                 .send(KeyEvent {
                     code: event.code(),
                     value: event.value(),
                 })
                 .is_err()
-            {
-                break; // receiver dropped
-            }
+        {
+            break; // receiver dropped
         }
     }
     Ok(())
