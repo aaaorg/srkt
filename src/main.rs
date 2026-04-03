@@ -17,10 +17,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Add or overwrite an expansion (use \\n for newlines)
-    Add {
-        trigger: String,
-        expansion: String,
-    },
+    Add { trigger: String, expansion: String },
     /// Remove an expansion
     Remove { trigger: String },
     /// List all expansions
@@ -94,9 +91,7 @@ fn handle_cmd(cmd: Cmd) -> anyhow::Result<()> {
             if !sock.exists() {
                 anyhow::bail!("srkt daemon is not running");
             }
-            signal_daemon_reload().map_err(|e| {
-                anyhow::anyhow!("Could not reach daemon: {}", e)
-            })?;
+            signal_daemon_reload().map_err(|e| anyhow::anyhow!("Could not reach daemon: {}", e))?;
             println!("Reloaded");
         }
 

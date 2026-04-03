@@ -1,0 +1,12 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <rect width="100" height="100" rx="20" fill="#0d1117"></rect>
+
+  <!-- trigger -->
+  <text x="50" y="35" text-anchor="middle" font-family="monospace" font-size="22" fill="#e6edf3">/s</text>
+
+  <!-- divider -->
+  <line x1="25" y1="50" x2="75" y2="50" stroke="#30363d" stroke-width="2"></line>
+
+  <!-- expansion -->
+  <text x="50" y="75" text-anchor="middle" font-family="monospace" font-size="24" fill="#3fb950">srkt</text>
+</svg>

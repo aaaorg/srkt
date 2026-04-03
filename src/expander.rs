@@ -122,7 +122,10 @@ mod tests {
         e.pop_char();
         // Type 'l' — buffer is now "/mal", not "/mail"
         let result = e.push_char('l');
-        assert_eq!(result, None, "buffer is /mal after backspace, should not match");
+        assert_eq!(
+            result, None,
+            "buffer is /mal after backspace, should not match"
+        );
     }
 
     #[test]
@@ -136,7 +139,10 @@ mod tests {
         e.reset();
         // Type 'l' — buffer is "l", not "/mail"
         let result = e.push_char('l');
-        assert_eq!(result, None, "buffer cleared by reset, single 'l' should not match");
+        assert_eq!(
+            result, None,
+            "buffer cleared by reset, single 'l' should not match"
+        );
     }
 
     #[test]
@@ -254,14 +260,18 @@ mod tests {
         e.push_char('a');
         e.push_char('i');
         assert!(e.push_char('l').is_none()); // "/mail" not in new config
-        // New trigger should fire
+                                             // New trigger should fire
         let mut e2 = Expander::new(vec![("/phone".to_string(), "123456".to_string())]);
-        for c in "/phone".chars() { e2.push_char(c); }
+        for c in "/phone".chars() {
+            e2.push_char(c);
+        }
         // last push:
         let mut e3 = Expander::new(vec![("/phone".to_string(), "123456".to_string())]);
         let chars: Vec<char> = "/phone".chars().collect();
         let last = chars.last().copied().unwrap();
-        for &c in &chars[..chars.len()-1] { e3.push_char(c); }
+        for &c in &chars[..chars.len() - 1] {
+            e3.push_char(c);
+        }
         assert!(e3.push_char(last).is_some());
     }
 
@@ -288,7 +298,11 @@ mod tests {
         // Type "/signal" fully
         let chars: Vec<char> = "/signal".chars().collect();
         let mut any_fired = false;
-        for c in chars { if e.push_char(c).is_some() { any_fired = true; } }
+        for c in chars {
+            if e.push_char(c).is_some() {
+                any_fired = true;
+            }
+        }
         // "/signal" is longer, but "/sig" appears first in expansions.
         // The actual result depends on iteration order (first-match-wins).
         // We just assert one of them fires and no panic occurs.

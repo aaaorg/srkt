@@ -28,8 +28,7 @@ const RESET_KEYS: &[u16] = &[
 pub async fn run(config: Config) -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("srkt=info".parse()?),
+            tracing_subscriber::EnvFilter::from_default_env().add_directive("srkt=info".parse()?),
         )
         .init();
     tracing::info!("srkt daemon starting");
@@ -51,7 +50,12 @@ pub async fn run(config: Config) -> Result<()> {
     let config = Arc::new(Mutex::new(config));
     let mut expander = {
         let cfg = config.lock().unwrap();
-        Expander::new(cfg.expansions.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        Expander::new(
+            cfg.expansions
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        )
     };
 
     // Config file watcher
@@ -75,11 +79,8 @@ pub async fn run(config: Config) -> Result<()> {
             tracing::error!("Failed to watch config file: {}", e);
             return;
         }
-        loop {
-            match rx.recv() {
-                Ok(_) => { let _ = watch_tx2.send(()); }
-                Err(_) => break, // channel closed, exit loop cleanly
-            }
+        while rx.recv().is_ok() {
+            let _ = watch_tx2.send(());
         }
     });
 
@@ -175,12 +176,19 @@ fn handle_key_event(
     }
 
     // Use the actual XKB keymap to decode the keypress — handles any keyboard layout.
-    if let Some(ch) = injector.keymap().from_evdev(ev.code as u32, shift, altgr) {
-        tracing::debug!("key {} (shift={} altgr={}) -> {:?}", ev.code, shift, altgr, ch);
+    if let Some(ch) = injector.keymap().decode(ev.code as u32, shift, altgr) {
+        tracing::debug!(
+            "key {} (shift={} altgr={}) -> {:?}",
+            ev.code,
+            shift,
+            altgr,
+            ch
+        );
         if let Some(expansion) = expander.push_char(ch) {
             tracing::info!(
                 "Trigger matched — expanding ({} backspaces + {} chars)",
-                expansion.delete_count, expansion.text.len()
+                expansion.delete_count,
+                expansion.text.len()
             );
             expander.reset();
             injector.backspace(expansion.delete_count);
@@ -204,4 +212,3 @@ fn reload_config(config: &Arc<Mutex<Config>>, expander: &mut Expander) {
         Err(e) => tracing::warn!("Failed to reload config: {}", e),
     }
 }
-
