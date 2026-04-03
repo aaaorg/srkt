@@ -19,7 +19,8 @@ use evdev::{uinput::VirtualDeviceBuilder, AttributeSet, EventType, InputEvent, K
 #[derive(Clone)]
 pub struct KeyInfo {
     pub evdev_code: u32,
-    pub mods_depressed: u32,
+    /// XKB level: 0=no mod, 1=Shift, 2=AltGr, 3=AltGr+Shift
+    pub level: u32,
 }
 
 #[derive(Clone)]
@@ -69,19 +70,21 @@ impl KeymapLookup {
                 return;
             }
             let evdev_code = xkb_code - 8;
-            let num_layouts = km.num_layouts_for_key(kc);
-            for layout in 0..num_layouts {
-                let num_levels = km.num_levels_for_key(kc, layout);
-                for level in 0..num_levels {
-                    for sym in km.key_get_syms_by_level(kc, layout, level) {
-                        if let Some(ch) = keysym_to_char(*sym) {
-                            table.entry(ch).or_insert(KeyInfo {
-                                evdev_code,
-                                mods_depressed: if level == 1 { 1 } else { 0 },
-                            });
-                            // Also record (evdev_code, level) → char for input decoding.
-                            input_table.entry((evdev_code, level as u32)).or_insert(ch);
-                        }
+            // Only build the injection table from layout 0 (the active layout).
+            // Iterating all layouts causes collisions: e.g. on QWERTZ Czech + English,
+            // 'y' from the English layout gets stored with the evdev_code of the Czech 'z'
+            // key, so injecting 'y' produces 'z' in the compositor. Layout 0 is authoritative.
+            let layout = 0;
+            let num_levels = km.num_levels_for_key(kc, layout);
+            for level in 0..num_levels {
+                for sym in km.key_get_syms_by_level(kc, layout, level) {
+                    if let Some(ch) = keysym_to_char(*sym) {
+                        table.entry(ch).or_insert(KeyInfo {
+                            evdev_code,
+                            level: level as u32,
+                        });
+                        // Also record (evdev_code, level) → char for input decoding.
+                        input_table.entry((evdev_code, level as u32)).or_insert(ch);
                     }
                 }
             }
@@ -194,15 +197,15 @@ impl Injector {
             match self.keymap.lookup(ch) {
                 Some(ki) => {
                     let code = ki.evdev_code as u16;
-                    if ki.mods_depressed != 0 {
-                        // key level 1 = Shift (KEY_LEFTSHIFT = 42)
-                        let _ = self.tx.send(InjectionCmd::Key { code: 42, value: 1 });
-                    }
+                    // KEY_LEFTSHIFT=42, KEY_RIGHTALT=100 (AltGr)
+                    let need_shift = ki.level == 1 || ki.level == 3;
+                    let need_altgr = ki.level == 2 || ki.level == 3;
+                    if need_altgr { let _ = self.tx.send(InjectionCmd::Key { code: 100, value: 1 }); }
+                    if need_shift { let _ = self.tx.send(InjectionCmd::Key { code: 42, value: 1 }); }
                     let _ = self.tx.send(InjectionCmd::Key { code, value: 1 });
                     let _ = self.tx.send(InjectionCmd::Key { code, value: 0 });
-                    if ki.mods_depressed != 0 {
-                        let _ = self.tx.send(InjectionCmd::Key { code: 42, value: 0 });
-                    }
+                    if need_shift { let _ = self.tx.send(InjectionCmd::Key { code: 42, value: 0 }); }
+                    if need_altgr { let _ = self.tx.send(InjectionCmd::Key { code: 100, value: 0 }); }
                 }
                 None => tracing::warn!("No keycode for char {:?}, skipping", ch),
             }

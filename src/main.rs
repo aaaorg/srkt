@@ -137,7 +137,7 @@ fn install_service() -> anyhow::Result<()> {
     let service = format!(
         r#"[Unit]
 Description=srkt Wayland text expander
-Documentation=https://github.com/jakub/srkt
+Documentation=https://github.com/aaaorg/srkt
 After=graphical-session.target
 
 [Service]
