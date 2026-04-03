@@ -2,6 +2,13 @@
 name = "srkt"
 version = "0.1.0"
 edition = "2021"
+description = "Wayland-native text expander via evdev + uinput"
+license = "MIT"
+repository = "https://github.com/aaaorg/srkt"
+keywords = ["wayland", "text-expander", "evdev", "uinput", "linux"]
+categories = ["command-line-utilities"]
+readme = "README.md"
+exclude = [".github", "docs"]
 
 [[bin]]
 name = "srkt"
