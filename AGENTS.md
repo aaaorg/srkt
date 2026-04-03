@@ -107,26 +107,19 @@ CI on PRs runs: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`
 
 ## Cutting a release
 
-Tag on `main` triggers the full release pipeline (build x86_64 + aarch64, GitHub Release, crates.io publish).
+Tag on `main` triggers the full release pipeline — CI builds binaries, creates GitHub Release, and publishes to crates.io automatically.
 
 ```bash
-# Recommended — install once: cargo install cargo-release
-git checkout main && git pull
-cargo release patch    # or minor / major
-git push && git push --tags
-
-# Monitor:
-gh run watch
-gh release list
-```
-
-Manual alternative (without cargo-release):
-```bash
-# 1. Edit version in Cargo.toml
+# Manual (no extra tools needed):
+# 1. Edit version in Cargo.toml  (patch/minor/major per semver)
 # 2. git add Cargo.toml && git commit -m "chore: release vX.Y.Z"
 # 3. git tag vX.Y.Z && git push && git push --tags
+
+# Optional shortcut with cargo-release:
+cargo release patch   # or minor / major
+git push && git push --tags
 ```
 
-Version bump guide: `patch` = bug fix, `minor` = new feature, `major` = breaking change.
+Monitor: `gh run watch` / `gh release list`
 
-**Note:** `CARGO_REGISTRY_TOKEN` secret in GitHub Actions has "publish existing crate" scope only. First-time crate creation must be done locally with `cargo login` + `cargo publish`.
+**Note:** `CARGO_REGISTRY_TOKEN` in GitHub Actions has "publish existing crate" scope — sufficient for all future releases. First-time crate creation (already done for v0.1.0) must be done locally.
