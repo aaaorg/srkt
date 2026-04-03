@@ -70,3 +70,63 @@ Before finishing code changes:
 - docs/README stay aligned with the actual CLI and architecture
 - no generated artifacts are committed accidentally
 - validation commands pass, unless the user explicitly asks to skip them
+
+## GitHub access
+
+Push access requires the `megastary` GitHub account. Always switch before pushing:
+
+```bash
+gh auth switch --user megastary
+git push origin <branch>
+```
+
+The `jakubsindelar-mountfieldcz` account has read-only access to this repo.
+
+## Branch workflow
+
+All work goes through feature branches — never commit directly to `main`.
+
+```bash
+git checkout -b feature/<name>   # branch from main
+# ... implement, commit frequently ...
+git push -u origin feature/<name>
+gh pr create --title "<title>" --body "$(cat <<'EOF'
+## Summary
+- <bullet>
+
+## Test plan
+- [ ] cargo test passes
+- [ ] cargo clippy passes
+EOF
+)"
+gh pr checks --watch             # wait for CI
+gh pr merge --squash             # merge when green
+```
+
+CI on PRs runs: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build`, `cargo test`.
+
+## Cutting a release
+
+Tag on `main` triggers the full release pipeline (build x86_64 + aarch64, GitHub Release, crates.io publish).
+
+```bash
+# Recommended — install once: cargo install cargo-release
+git checkout main && git pull
+cargo release patch    # or minor / major
+git push && git push --tags
+
+# Monitor:
+gh run watch
+gh release list
+```
+
+Manual alternative (without cargo-release):
+```bash
+# 1. Edit version in Cargo.toml
+# 2. git add Cargo.toml && git commit -m "chore: release vX.Y.Z"
+# 3. git tag vX.Y.Z && git push && git push --tags
+```
+
+Version bump guide: `patch` = bug fix, `minor` = new feature, `major` = breaking change.
+
+**Note:** `CARGO_REGISTRY_TOKEN` secret in GitHub Actions has "publish existing crate" scope only. First-time crate creation must be done locally with `cargo login` + `cargo publish`.

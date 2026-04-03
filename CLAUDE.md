@@ -73,3 +73,47 @@ Jakub"""
 ```
 
 Auto-reloaded on file save (inotify watch in daemon) and on `srkt reload` (IPC over `$XDG_RUNTIME_DIR/srkt.sock`).
+
+## Git workflow
+
+**Branch model:** `main` + feature branches. `main` is protected — changes go through PRs only.
+
+```bash
+git checkout -b feature/my-feature   # branch from main
+# ... make changes, commit ...
+git push -u origin feature/my-feature
+# open PR → CI must pass → merge
+```
+
+**CI on PRs** (`.github/workflows/ci.yml`): fmt check, clippy, build, test — runs on `ubuntu-24.04`.
+
+## Releasing
+
+Tag on `main` triggers the release pipeline automatically (`.github/workflows/release.yml`).
+
+```bash
+# Option A — with cargo-release (install once: cargo install cargo-release)
+cargo release patch   # or minor / major
+git push && git push --tags
+
+# Option B — manual
+# 1. Edit version in Cargo.toml
+# 2. git add Cargo.toml && git commit -m "chore: release vX.Y.Z"
+# 3. git tag vX.Y.Z && git push && git push --tags
+```
+
+Pipeline builds native `x86_64-linux` and `aarch64-linux` binaries, creates a GitHub Release with SHA-256 checksums, and publishes to crates.io.
+
+**Secrets required** (GitHub → Settings → Secrets → Actions):
+- `CARGO_REGISTRY_TOKEN` — crates.io token with "publish existing crate" scope
+
+**First-time crate creation** must be done locally with a token that has "publish new crate" scope:
+```bash
+cargo login   # enter token from crates.io/settings/tokens
+cargo publish
+```
+
+**GitHub account:** push access is under the `megastary` account. Switch with:
+```bash
+gh auth switch --user megastary
+```
